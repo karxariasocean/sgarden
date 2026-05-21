@@ -65,6 +65,7 @@ The application seeds two test users on startup:
 ## Environment Variables
 
 | Variable | Default | Description |
+
 |----------|---------|-------------|
 | `DATABASE_URL` | `mongodb://localhost:27017/sgarden` | MongoDB connection string |
 | `PORT` | `4000` | Server port |
