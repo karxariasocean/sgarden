@@ -1,6 +1,7 @@
 package com.sgarden.controller;
 
 import com.sgarden.dto.ErrorResponse;
+import com.sgarden.dto.PagedProductResponse;
 import com.sgarden.dto.ProductRequest;
 import com.sgarden.model.Product;
 import com.sgarden.repository.ProductRepository;
@@ -10,13 +11,17 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 @RestController
 @RequestMapping("/api/products")
 public class ProductController {
+
+    private static final Set<String> VALID_CATEGORIES = Set.of("Electronics", "Accessories", "Storage", "Networking");
 
     private final ProductService productService;
     private final ProductRepository productRepository;
@@ -26,9 +31,43 @@ public class ProductController {
         this.productRepository = productRepository;
     }
 
+    private Map<String, String> validateProductRequest(ProductRequest request, boolean isCreate) {
+        Map<String, String> errors = new LinkedHashMap<>();
+        if (isCreate && (request.getName() == null || request.getName().isBlank())) {
+            errors.put("name", "Name is required and must be a non-empty string");
+        } else if (!isCreate && request.getName() != null && request.getName().isBlank()) {
+            errors.put("name", "Name must be a non-empty string");
+        }
+        if (request.getPrice() != null && request.getPrice() <= 0) {
+            errors.put("price", "Price must be a positive number");
+        }
+        if (request.getCategory() != null && !VALID_CATEGORIES.contains(request.getCategory())) {
+            errors.put("category", "Category must be one of: " + String.join(", ", VALID_CATEGORIES.stream().sorted().toList()));
+        }
+        return errors;
+    }
+
     @GetMapping
-    public ResponseEntity<List<Product>> getAllProducts() {
-        return ResponseEntity.ok(productService.getAllProducts());
+    public ResponseEntity<PagedProductResponse> getAllProducts(
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "10") int limit,
+            @RequestParam(required = false) String sort,
+            @RequestParam(defaultValue = "asc") String order) {
+        return ResponseEntity.ok(productService.getAllProducts(page, limit, sort, order));
+    }
+
+    @GetMapping("/stats")
+    public ResponseEntity<Map<String, Object>> getProductStats() {
+        return ResponseEntity.ok(productService.getProductStats());
+    }
+
+    @GetMapping("/search")
+    public ResponseEntity<List<Product>> searchProducts(
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) String category,
+            @RequestParam(required = false) Double minPrice,
+            @RequestParam(required = false) Double maxPrice) {
+        return ResponseEntity.ok(productService.searchProducts(q, category, minPrice, maxPrice));
     }
 
     @GetMapping("/{id}")
@@ -41,13 +80,36 @@ public class ProductController {
 
     @PostMapping
     public ResponseEntity<?> createProduct(@RequestBody ProductRequest request) {
+        Map<String, String> errors = validateProductRequest(request, true);
+        if (!errors.isEmpty()) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(new ErrorResponse("Validation failed", errors));
+        }
         Product product = productService.createProduct(request);
         return ResponseEntity.status(HttpStatus.CREATED).body(product);
     }
 
     @PutMapping("/{id}")
     public ResponseEntity<?> updateProduct(@PathVariable String id, @RequestBody ProductRequest request) {
+        Map<String, String> errors = validateProductRequest(request, false);
+        if (!errors.isEmpty()) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(new ErrorResponse("Validation failed", errors));
+        }
         return productService.updateProduct(id, request)
+                .map(product -> ResponseEntity.ok((Object) product))
+                .orElse(ResponseEntity.status(HttpStatus.NOT_FOUND)
+                        .body(new ErrorResponse("Product not found")));
+    }
+
+    @PatchMapping("/{id}/stock")
+    public ResponseEntity<?> updateProductStock(@PathVariable String id, @RequestBody Map<String, Integer> body) {
+        Integer stock = body.get("stock");
+        if (stock == null || stock < 0) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(new ErrorResponse("Validation failed", Map.of("stock", "Stock must be a non-negative number")));
+        }
+        return productService.updateStock(id, stock)
                 .map(product -> ResponseEntity.ok((Object) product))
                 .orElse(ResponseEntity.status(HttpStatus.NOT_FOUND)
                         .body(new ErrorResponse("Product not found")));
